@@ -1,0 +1,1 @@
+OS-reboot.py 是交换机重启的脚本需要有paramiko和paramiko_expect的环境需求
