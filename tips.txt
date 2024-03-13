@@ -1,1 +1,2 @@
 OS-reboot.py 是交换机重启的脚本需要有paramiko和paramiko_expect的环境需求
+通过console串口进入交换机需要使用pyserial模块，在cmd下使用安装命令pip install pySerial。引用模块：import serial
