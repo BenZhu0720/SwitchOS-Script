@@ -22,7 +22,7 @@ ser.write(b"ip ssh server enable \n")
 
 #查看命令输入的结果
 ser.write(b"end\n")
-ser.write(b"show runconfg\n")
+ser.write(b"show running-confg\n")
 for i in range(13):
     ser.write(b"\t")
     time.sleep(1)
