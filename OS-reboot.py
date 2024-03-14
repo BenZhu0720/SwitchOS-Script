@@ -11,7 +11,7 @@ device={
 
 }
 #设置重启次数
-reboot_count = 2
+reboot_count = 10
 
 #创建一个文件夹来存储每次重启的结果
 result_folder = "reboot_result"
@@ -52,7 +52,7 @@ for i in range(reboot_count):
 
         #等待交换机重启(时间以秒为单位)
         print(f"等待交换机重启......")
-        time.sleep(120)
+        time.sleep(177)
 
         #尝试重新连接到交换机以检查其状态
         try:
