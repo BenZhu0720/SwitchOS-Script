@@ -22,8 +22,7 @@ if not os.path.exists(result_folder):
 success_count = 0
 failure_count = 0
 
-#获取当前时间戳
-current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+#获取当前日期的时间戳
 current_date = datetime.datetime.now().strftime("%d%m%Y")
 
 #循环执行重启操作
@@ -54,6 +53,8 @@ for i in range(reboot_count):
         print(f"等待交换机重启......")
         time.sleep(177)
 
+        #在循环内获取每次重启时当前的时间戳
+        current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         #尝试重新连接到交换机以检查其状态
         try:
             ssh.connect(device['hostname'], username=device['username'], password=device['password'])
