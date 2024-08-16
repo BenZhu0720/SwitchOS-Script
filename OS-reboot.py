@@ -5,7 +5,7 @@ import time
 import datetime
 
 device={
-    'hostname': '192.168.0.123',
+    'hostname': '192.168.1.123',
     'username': 'python',
     'password': '123456',
 
