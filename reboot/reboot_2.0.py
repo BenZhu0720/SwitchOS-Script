@@ -75,6 +75,7 @@ for i in range(reboot_count):
                 ssh.connect(device['hostname'], username=device['username'], password=device['password'], timeout=7)
                 # 如果能够重新连接，则认为重启成功
                 success_count += 1
+                end_time = time.time()
                 result = "交换机重启成功"
                 print(f"重试{retry+1}/{retry_count} - 成功重新连接到交换机")
                 break
@@ -86,6 +87,7 @@ for i in range(reboot_count):
                 else:
                     # 如果重试次数耗尽，则认为重启失败
                     failure_count += 1
+                    end_time = time.time()
                     result = "交换机重启失败"
                     fail_list.append(i+1)
         
@@ -115,7 +117,7 @@ for i in range(reboot_count):
         input(f"请解决第{i+1}次的OTHER ERROR问题;\n按Enter键继续测试......")
        
        
-    end_time = time.time()
+    
     reboot_time = end_time - start_time
     time.sleep(7)
 
