@@ -5,12 +5,13 @@ import time
 import datetime
 
 
+
 from convert_seconds import convert_seconds
 
 device={
-    'hostname': '192.168.1.123',
+    'hostname': '192.168.0.254',
     'username': 'python',
-    'password': '123456',
+    'password': '123',
 
 }
 
@@ -64,7 +65,7 @@ for i in range(reboot_count):
 
 
         #等待交换机重启(时间以秒为单位)
-        print(f"等待第{i+1}次交换机重启......")
+        print(f"共{reboot_count}次软重启，等待第{i+1}次交换机重启......")
         #等待一分钟后开始检测是否重启成功
         time.sleep(70)
 
