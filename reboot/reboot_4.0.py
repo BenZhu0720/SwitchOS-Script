@@ -33,32 +33,50 @@ current_date = datetime.datetime.now().strftime("%Y%m%d")
 
 def get_device_sn(device):
     """获取设备序列号"""
+    
+        # 尝试匹配常见SN格式
+    sn_patterns = [
+        r'SN:\s+(\S+)',
+        r'Processor board ID (\S+)',          # Cisco格式
+        r'Serial Number\s*:\s*(\S+)',         # 华为/H3C格式
+        r'Serial num\s*:\s*(\S+)',            # 其他格式
+        r'[Ss]erial\s*[Nn]umber\s*:\s*(\S+)',# 通用格式
+    ]
+
     try:
         ssh = paramiko.SSHClient()
         ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
         ssh.connect(device['hostname'], username=device['username'],
                     password=device['password'], timeout=10)
         
-        with SSHClientInteraction(ssh, timeout=5, display=False) as interaction:
-            interaction.send('show version')
-            interaction.expect('--More--|#', timeout=5)
-            output = interaction.current_output_clean
-            
-            # 尝试匹配常见SN格式
-            sn_patterns = [
-                r'SN:\s+(\S+)',
-                r'Processor board ID (\S+)',          # Cisco格式
-                r'Serial Number\s*:\s*(\S+)',         # 华为/H3C格式
-                r'Serial num\s*:\s*(\S+)',            # 其他格式
-                r'[Ss]erial\s*[Nn]umber\s*:\s*(\S+)',# 通用格式
-            ]
-            
+        # 使用invoke_shell方法打开一个交互式shell
+        channel = ssh.invoke_shell()
+        time.sleep(1)  # 等待shell启动
+        
+        # 发送命令并接收输出
+        channel.send('show version\n')
+        time.sleep(7)  # 等待命令执行
+        
+        # 接收输出，这里假设输出不会超过65535字节
+        output = channel.recv(65535).decode()
+
+        sn_found = False
+        for line in output.splitlines():  
             for pattern in sn_patterns:
                 match = re.search(pattern, output)
                 if match:
-                    return match.group(1).strip()
+                    sn = match.group(1)
+                    print(f'SN号: {sn}')
+                    sn_found = True
+                    return sn
+                break
+
+            if sn_found:
+                break
             
-        return 'UNKNOWN'
+        if not  sn_found:
+            print("未能找到SN号.")
+
     except Exception as e:
         print(f"获取 {device['hostname']} SN失败: {str(e)}")
         return 'ERROR'
