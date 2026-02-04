@@ -1,0 +1,364 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+设备状态巡检脚本
+功能:检查麒麟系统、统信系统、服务器、网络设备和打印机的基本运行状态
+作者:巡检系统
+日期:2026-02-04
+"""
+
+import subprocess
+import socket
+import time
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Dict, List, Tuple
+import logging
+from datetime import datetime
+
+# 配置日志
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('device_check.log'),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
+
+class DeviceChecker:
+    def __init__(self):
+        # 设备列表 - 请根据实际情况修改IP地址和凭据
+        self.devices = {
+            # 麒麟/统信台式机 (4台)
+            'desktop1': {'ip': '172.16.11.1', 'type': 'kylin', 'port': 22, 'username': 'admin'},
+            'desktop2': {'ip': '172.16.11.2', 'type': 'uos', 'port': 22, 'username': 'admin'},
+            'desktop3': {'ip': '172.16.11.3', 'type': 'uos', 'port': 22, 'username': 'admin'},
+            'desktop4': {'ip': '172.16.11.4', 'type': 'kylin', 'port': 22, 'username': 'admin'},
+            
+            # 笔记本电脑 (2台)
+            'laptop1': {'ip': '192.168.1.105', 'type': 'uos', 'port': 22, 'username': 'admin'},
+            'laptop2': {'ip': '192.168.1.106', 'type': 'uos', 'port': 22, 'username': 'admin'},
+            
+            # 服务器 (4台)
+            'server1': {'ip': '192.168.1.201', 'type': 'server', 'port': 22, 'username': 'root'},
+            'server2': {'ip': '192.168.1.202', 'type': 'server', 'port': 22, 'username': 'root'},
+            'server3': {'ip': '192.168.1.203', 'type': 'server', 'port': 22, 'username': 'root'},
+            'server4': {'ip': '192.168.1.204', 'type': 'server', 'port': 22, 'username': 'root'},
+            
+            # 关键网络设备
+            'huawei_switch': {'ip': '192.168.1.10', 'type': 'huawei_switch', 'port': 22},
+            'huawei_firewall': {'ip': '192.168.1.1', 'type': 'huawei_firewall', 'port': 22},
+            
+            # 打印机
+            'printer': {'ip': '192.168.1.50', 'type': 'printer', 'port': 9100}
+        }
+        
+        # 通用密码 - 建议使用更安全的方式存储
+        self.password = "your_password_here"  # 请修改为实际密码
+        
+    def check_port(self, host: str, port: int, timeout: int = 3) -> bool:
+        """检查端口是否开放"""
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(timeout)
+            result = sock.connect_ex((host, port))
+            sock.close()
+            return result == 0
+        except Exception as e:
+            logger.error(f"检查端口时出错 {host}:{port}: {e}")
+            return False
+    
+    def ping_host(self, host: str) -> bool:
+        """Ping主机检查连通性"""
+        try:
+            # Linux/Mac
+            param = '-c' if hasattr(subprocess, 'DEVNULL') else '-n'
+            command = ['ping', param, '3', '-W', '2', host]
+            
+            # Windows系统使用以下命令
+            # command = ['ping', '-n', '3', '-w', '2000', host]
+            
+            result = subprocess.run(command, 
+                                  stdout=subprocess.DEVNULL, 
+                                  stderr=subprocess.DEVNULL)
+            return result.returncode == 0
+        except Exception as e:
+            logger.error(f"Ping {host} 时出错: {e}")
+            return False
+    
+    def check_linux_device(self, device_name: str, device_info: Dict) -> Dict:
+        """检查Linux设备(麒麟/UOS/服务器)"""
+        result = {
+            'name': device_name,
+            'ip': device_info['ip'],
+            'type': device_info['type'],
+            'status': 'unknown',
+            'response_time': None,
+            'details': ''
+        }
+        
+        start_time = time.time()
+        
+        # 1. 检查Ping连通性
+        if not self.ping_host(device_info['ip']):
+            result['status'] = 'offline'
+            result['details'] = '无法Ping通设备'
+            return result
+        
+        # 2. 检查SSH端口
+        if not self.check_port(device_info['ip'], device_info['port']):
+            result['status'] = 'warning'
+            result['details'] = '设备在线但SSH端口不可用'
+            result['response_time'] = time.time() - start_time
+            return result
+        
+        # 3. 可选：通过SSH执行简单命令检查系统负载
+        # 这里省略了SSH连接和命令执行的具体实现
+        # 可以使用paramiko库来实现
+        
+        result['status'] = 'online'
+        result['response_time'] = time.time() - start_time
+        result['details'] = '设备运行正常'
+        
+        return result
+    
+    def check_network_device(self, device_name: str, device_info: Dict) -> Dict:
+        """检查华为网络设备（交换机、防火墙）"""
+        result = {
+            'name': device_name,
+            'ip': device_info['ip'],
+            'type': device_info['type'],
+            'status': 'unknown',
+            'response_time': None,
+            'details': ''
+        }
+        
+        start_time = time.time()
+        
+        # 1. 检查Ping连通性
+        if not self.ping_host(device_info['ip']):
+            result['status'] = 'offline'
+            result['details'] = '无法Ping通设备'
+            return result
+        
+        # 2. 检查SSH/Telnet端口
+        if not self.check_port(device_info['ip'], device_info['port']):
+            result['status'] = 'warning'
+            result['details'] = '设备在线但管理端口不可用'
+            result['response_time'] = time.time() - start_time
+            return result
+        
+        result['status'] = 'online'
+        result['response_time'] = time.time() - start_time
+        result['details'] = '网络设备运行正常'
+        
+        return result
+    
+    def check_printer(self, device_name: str, device_info: Dict) -> Dict:
+        """检查打印机状态"""
+        result = {
+            'name': device_name,
+            'ip': device_info['ip'],
+            'type': device_info['type'],
+            'status': 'unknown',
+            'response_time': None,
+            'details': ''
+        }
+        
+        start_time = time.time()
+        
+        # 1. 检查Ping连通性
+        if not self.ping_host(device_info['ip']):
+            result['status'] = 'offline'
+            result['details'] = '无法Ping通打印机'
+            return result
+        
+        # 2. 检查打印机常用端口
+        printer_ports = [9100, 515, 631]  # RAW, LPD, IPP
+        port_available = False
+        
+        for port in printer_ports:
+            if self.check_port(device_info['ip'], port, timeout=2):
+                port_available = True
+                break
+        
+        if not port_available:
+            result['status'] = 'warning'
+            result['details'] = '打印机在线但打印服务端口不可用'
+            result['response_time'] = time.time() - start_time
+            return result
+        
+        result['status'] = 'online'
+        result['response_time'] = time.time() - start_time
+        result['details'] = '打印机运行正常'
+        
+        return result
+    
+    def check_single_device(self, device_name: str) -> Tuple[str, Dict]:
+        """检查单个设备"""
+        device_info = self.devices.get(device_name)
+        if not device_info:
+            return device_name, {'error': '设备未定义'}
+        
+        device_type = device_info['type']
+        
+        try:
+            if device_type in ['kylin', 'uos', 'server']:
+                result = self.check_linux_device(device_name, device_info)
+            elif device_type in ['huawei_switch', 'huawei_firewall']:
+                result = self.check_network_device(device_name, device_info)
+            elif device_type == 'printer':
+                result = self.check_printer(device_name, device_info)
+            else:
+                result = {
+                    'name': device_name,
+                    'ip': device_info['ip'],
+                    'type': device_type,
+                    'status': 'error',
+                    'details': '未知设备类型'
+                }
+        except Exception as e:
+            result = {
+                'name': device_name,
+                'ip': device_info['ip'],
+                'type': device_type,
+                'status': 'error',
+                'details': f'检查过程中出错: {str(e)}'
+            }
+        
+        return device_name, result
+    
+    def check_all_devices(self) -> Dict[str, Dict]:
+        """并发检查所有设备"""
+        logger.info("开始设备巡检...")
+        logger.info(f"总计设备数: {len(self.devices)}")
+        
+        results = {}
+        
+        # 使用线程池并发检查
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            future_to_device = {
+                executor.submit(self.check_single_device, device_name): device_name 
+                for device_name in self.devices.keys()
+            }
+            
+            for future in as_completed(future_to_device):
+                device_name = future_to_device[future]
+                try:
+                    name, result = future.result()
+                    results[name] = result
+                    logger.info(f"设备 {name} ({result['ip']}) 检查完成: {result['status']}")
+                except Exception as e:
+                    logger.error(f"检查设备 {device_name} 时出错: {e}")
+                    results[device_name] = {
+                        'name': device_name,
+                        'status': 'error',
+                        'details': f'检查失败: {str(e)}'
+                    }
+        
+        return results
+    
+    def generate_report(self, results: Dict[str, Dict]) -> str:
+        """生成巡检报告"""
+        report_lines = []
+        report_lines.append("=" * 60)
+        report_lines.append(f"设备巡检报告 - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        report_lines.append("=" * 60)
+        
+        # 统计信息
+        total = len(results)
+        online_count = sum(1 for r in results.values() if r.get('status') == 'online')
+        offline_count = sum(1 for r in results.values() if r.get('status') == 'offline')
+        warning_count = sum(1 for r in results.values() if r.get('status') == 'warning')
+        error_count = sum(1 for r in results.values() if r.get('status') == 'error')
+        
+        report_lines.append(f"\n统计信息:")
+        report_lines.append(f"  总计设备: {total}")
+        report_lines.append(f"  在线设备: {online_count}")
+        report_lines.append(f"  离线设备: {offline_count}")
+        report_lines.append(f"  警告设备: {warning_count}")
+        report_lines.append(f"  错误设备: {error_count}")
+        
+        # 按设备类型分组显示
+        device_types = {}
+        for device_name, result in results.items():
+            dev_type = result.get('type', 'unknown')
+            if dev_type not in device_types:
+                device_types[dev_type] = []
+            device_types[dev_type].append((device_name, result))
+        
+        for dev_type, devices in device_types.items():
+            report_lines.append(f"\n{dev_type.upper()} 设备 ({len(devices)}台):")
+            report_lines.append("-" * 40)
+            
+            for device_name, result in devices:
+                status_icon = {
+                    'online': '✅',
+                    'offline': '❌',
+                    'warning': '⚠️',
+                    'error': '❓',
+                    'unknown': '❔'
+                }.get(result['status'], '❔')
+                
+                report_lines.append(
+                    f"{status_icon} {device_name:15} | "
+                    f"IP: {result.get('ip', 'N/A'):15} | "
+                    f"状态: {result.get('status', 'unknown'):8} | "
+                    f"{result.get('details', '')}"
+                )
+        
+        # 异常设备汇总
+        abnormal_devices = [
+            (name, result) for name, result in results.items() 
+            if result.get('status') in ['offline', 'warning', 'error']
+        ]
+        
+        if abnormal_devices:
+            report_lines.append(f"\n⚠️ 异常设备汇总 ({len(abnormal_devices)}台):")
+            report_lines.append("-" * 40)
+            for device_name, result in abnormal_devices:
+                report_lines.append(f"  {device_name}: {result.get('details', '未知异常')}")
+        
+        report_lines.append(f"\n巡检完成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        report_lines.append("=" * 60)
+        
+        return "\n".join(report_lines)
+
+def main():
+    """主函数"""
+    checker = DeviceChecker()
+    
+    print("设备巡检系统")
+    print("正在检查设备状态...")
+    
+    # 执行检查
+    results = checker.check_all_devices()
+    
+    # 生成并显示报告
+    report = checker.generate_report(results)
+    print("\n" + report)
+    
+    # 保存报告到文件
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"device_inspection_report_{timestamp}.txt"
+    
+    with open(filename, 'w', encoding='utf-8') as f:
+        f.write(report)
+    
+    print(f"\n详细报告已保存到: {filename}")
+    
+    # 如果有异常设备，返回非零退出码
+    abnormal_count = sum(1 for r in results.values() 
+                        if r.get('status') in ['offline', 'warning', 'error'])
+    
+    if abnormal_count > 0:
+        print(f"警告: 发现 {abnormal_count} 台异常设备")
+        return 1
+    
+    return 0
+
+if __name__ == "__main__":
+    exit_code = main()
+    exit(exit_code)
