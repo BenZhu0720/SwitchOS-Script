@@ -1,18 +1,22 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+#!version:1.1
 """
-设备状态巡检脚本
-功能:检查麒麟系统、统信系统、服务器、网络设备和打印机的基本运行状态
-作者:巡检系统
-日期:2026-02-04
+@设备状态巡检脚本
+@功能:检查麒麟系统、统信系统、服务器、网络设备和打印机的基本运行状态
+@作者:巡检系统
+@日期:2026-02-06
+@改进:添加设备排序、可配置保存位置
 """
 
 import subprocess
 import socket
 import time
 import threading
+import os
+import argparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Optional
 import logging
 from datetime import datetime
 
@@ -28,36 +32,89 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 class DeviceChecker:
-    def __init__(self):
+    def __init__(self, output_dir: str = "."):
+        """
+        初始化设备检查器
+        
+        Args:
+            output_dir: 报告保存目录
+        """
+        self.output_dir = output_dir
+        
+        # 创建保存目录（如果不存在）
+        if not os.path.exists(output_dir):
+            os.makedirs(output_dir)
+        
         # 设备列表 - 请根据实际情况修改IP地址和凭据
+        # 设备按照类型和序号从低到高排序
         self.devices = {
-            # 麒麟/统信台式机 (4台)
-            'desktop1': {'ip': '172.16.11.1', 'type': 'kylin', 'port': 22, 'username': 'admin'},
-            'desktop2': {'ip': '172.16.11.2', 'type': 'uos', 'port': 22, 'username': 'admin'},
-            'desktop3': {'ip': '172.16.11.3', 'type': 'uos', 'port': 22, 'username': 'admin'},
-            'desktop4': {'ip': '172.16.11.4', 'type': 'kylin', 'port': 22, 'username': 'admin'},
+            # 麒麟/统信台式机 (4台) - 按序号排序
+            'desktop1': {'ip': '172.16.11.1', 'type': 'kylin', 'port': 22, 'username': 'admin', 'order': 1},
+            'desktop2': {'ip': '172.16.11.2', 'type': 'uos', 'port': 22, 'username': 'admin', 'order': 2},
+            'desktop3': {'ip': '172.16.11.3', 'type': 'uos', 'port': 22, 'username': 'admin', 'order': 3},
+            'desktop4': {'ip': '172.16.11.4', 'type': 'kylin', 'port': 22, 'username': 'admin', 'order': 4},
             
-            # 笔记本电脑 (2台)
-            'laptop1': {'ip': '192.168.1.105', 'type': 'uos', 'port': 22, 'username': 'admin'},
-            'laptop2': {'ip': '192.168.1.106', 'type': 'uos', 'port': 22, 'username': 'admin'},
+            # 笔记本电脑 (2台) - 按序号排序
+            'laptop1': {'ip': '172.16.11.5', 'type': 'uos', 'port': 22, 'username': 'admin', 'order': 5},
+            'laptop2': {'ip': '172.16.11.6', 'type': 'uos', 'port': 22, 'username': 'admin', 'order': 6},
             
-            # 服务器 (4台)
-            'server1': {'ip': '192.168.1.201', 'type': 'server', 'port': 22, 'username': 'root'},
-            'server2': {'ip': '192.168.1.202', 'type': 'server', 'port': 22, 'username': 'root'},
-            'server3': {'ip': '192.168.1.203', 'type': 'server', 'port': 22, 'username': 'root'},
-            'server4': {'ip': '192.168.1.204', 'type': 'server', 'port': 22, 'username': 'root'},
+            # 服务器 (4台) - 按序号排序
+            'server1': {'ip': '172.16.12.1', 'type': 'server', 'port': 22, 'username': 'root', 'order': 7},
+            'server2': {'ip': '172.16.12.2', 'type': 'server', 'port': 22, 'username': 'root', 'order': 8},
+            'server3': {'ip': '172.16.12.3', 'type': 'server', 'port': 22, 'username': 'root', 'order': 9},
+            'server4': {'ip': '172.16.12.4', 'type': 'server', 'port': 22, 'username': 'root', 'order': 10},
             
-            # 关键网络设备
-            'huawei_switch': {'ip': '192.168.1.10', 'type': 'huawei_switch', 'port': 22},
-            'huawei_firewall': {'ip': '192.168.1.1', 'type': 'huawei_firewall', 'port': 22},
+            # 关键网络设备 - 按序号排序
+            'huawei_switch': {'ip': '172.16.11.254', 'type': 'huawei_switch', 'port': 22, 'order': 11},
+            'huawei_firewall': {'ip': '172.16.1.14', 'type': 'huawei_firewall', 'port': 22, 'order': 12},
             
             # 打印机
-            'printer': {'ip': '192.168.1.50', 'type': 'printer', 'port': 9100}
+            'printer': {'ip': '172.16.11.7', 'type': 'printer', 'port': 9100, 'order': 13}
+        }
+        
+        # 设备类型排序映射（控制最终报告中设备类型的显示顺序）
+        self.type_order = {
+            'kylin': 1,       # 麒麟系统
+            'uos': 2,         # 统信系统
+            'server': 3,      # 服务器
+            'huawei_switch': 4,  # 华为交换机
+            'huawei_firewall': 5, # 华为防火墙
+            'printer': 6      # 打印机
         }
         
         # 通用密码 - 建议使用更安全的方式存储
         self.password = "your_password_here"  # 请修改为实际密码
         
+    def get_sorted_devices(self) -> List[Tuple[str, Dict]]:
+        """
+        获取排序后的设备列表
+        
+        排序规则:
+        1. 先按设备类型排序 (kylin -> uos -> server -> 网络设备 -> 打印机)
+        2. 同类型设备按序号排序
+        """
+        # 提取所有设备并添加排序键
+        devices_list = []
+        for name, info in self.devices.items():
+            device_info = info.copy()
+            # 提取设备序号（从设备名称中提取数字）
+            import re
+            numbers = re.findall(r'\d+', name)
+            device_order = int(numbers[0]) if numbers else float('inf')
+            
+            # 类型排序值
+            type_order = self.type_order.get(info['type'], 99)
+            
+            # 创建排序键：(类型排序, 设备序号, 设备名称)
+            sort_key = (type_order, device_order, name)
+            devices_list.append((sort_key, name, device_info))
+        
+        # 按排序键排序
+        devices_list.sort(key=lambda x: x[0])
+        
+        # 返回排序后的设备列表
+        return [(name, info) for _, name, info in devices_list]
+    
     def check_port(self, host: str, port: int, timeout: int = 3) -> bool:
         """检查端口是否开放"""
         try:
@@ -96,7 +153,8 @@ class DeviceChecker:
             'type': device_info['type'],
             'status': 'unknown',
             'response_time': None,
-            'details': ''
+            'details': '',
+            'order': device_info.get('order', 999)
         }
         
         start_time = time.time()
@@ -114,10 +172,6 @@ class DeviceChecker:
             result['response_time'] = time.time() - start_time
             return result
         
-        # 3. 可选：通过SSH执行简单命令检查系统负载
-        # 这里省略了SSH连接和命令执行的具体实现
-        # 可以使用paramiko库来实现
-        
         result['status'] = 'online'
         result['response_time'] = time.time() - start_time
         result['details'] = '设备运行正常'
@@ -132,7 +186,8 @@ class DeviceChecker:
             'type': device_info['type'],
             'status': 'unknown',
             'response_time': None,
-            'details': ''
+            'details': '',
+            'order': device_info.get('order', 999)
         }
         
         start_time = time.time()
@@ -164,7 +219,8 @@ class DeviceChecker:
             'type': device_info['type'],
             'status': 'unknown',
             'response_time': None,
-            'details': ''
+            'details': '',
+            'order': device_info.get('order', 999)
         }
         
         start_time = time.time()
@@ -196,12 +252,8 @@ class DeviceChecker:
         
         return result
     
-    def check_single_device(self, device_name: str) -> Tuple[str, Dict]:
+    def check_single_device(self, device_name: str, device_info: Dict) -> Tuple[str, Dict]:
         """检查单个设备"""
-        device_info = self.devices.get(device_name)
-        if not device_info:
-            return device_name, {'error': '设备未定义'}
-        
         device_type = device_info['type']
         
         try:
@@ -217,7 +269,8 @@ class DeviceChecker:
                     'ip': device_info['ip'],
                     'type': device_type,
                     'status': 'error',
-                    'details': '未知设备类型'
+                    'details': '未知设备类型',
+                    'order': device_info.get('order', 999)
                 }
         except Exception as e:
             result = {
@@ -225,7 +278,8 @@ class DeviceChecker:
                 'ip': device_info['ip'],
                 'type': device_type,
                 'status': 'error',
-                'details': f'检查过程中出错: {str(e)}'
+                'details': f'检查过程中出错: {str(e)}',
+                'order': device_info.get('order', 999)
             }
         
         return device_name, result
@@ -233,15 +287,18 @@ class DeviceChecker:
     def check_all_devices(self) -> Dict[str, Dict]:
         """并发检查所有设备"""
         logger.info("开始设备巡检...")
-        logger.info(f"总计设备数: {len(self.devices)}")
+        
+        # 获取排序后的设备列表
+        sorted_devices = self.get_sorted_devices()
+        logger.info(f"总计设备数: {len(sorted_devices)}")
         
         results = {}
         
         # 使用线程池并发检查
         with ThreadPoolExecutor(max_workers=10) as executor:
             future_to_device = {
-                executor.submit(self.check_single_device, device_name): device_name 
-                for device_name in self.devices.keys()
+                executor.submit(self.check_single_device, device_name, device_info): device_name 
+                for device_name, device_info in sorted_devices
             }
             
             for future in as_completed(future_to_device):
@@ -255,7 +312,8 @@ class DeviceChecker:
                     results[device_name] = {
                         'name': device_name,
                         'status': 'error',
-                        'details': f'检查失败: {str(e)}'
+                        'details': f'检查失败: {str(e)}',
+                        'order': 999
                     }
         
         return results
@@ -263,9 +321,9 @@ class DeviceChecker:
     def generate_report(self, results: Dict[str, Dict]) -> str:
         """生成巡检报告"""
         report_lines = []
-        report_lines.append("=" * 60)
+        report_lines.append("=" * 70)
         report_lines.append(f"设备巡检报告 - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        report_lines.append("=" * 60)
+        report_lines.append("=" * 70)
         
         # 统计信息
         total = len(results)
@@ -274,14 +332,14 @@ class DeviceChecker:
         warning_count = sum(1 for r in results.values() if r.get('status') == 'warning')
         error_count = sum(1 for r in results.values() if r.get('status') == 'error')
         
-        report_lines.append(f"\n统计信息:")
+        report_lines.append(f"\n📊 统计信息:")
         report_lines.append(f"  总计设备: {total}")
-        report_lines.append(f"  在线设备: {online_count}")
-        report_lines.append(f"  离线设备: {offline_count}")
-        report_lines.append(f"  警告设备: {warning_count}")
-        report_lines.append(f"  错误设备: {error_count}")
+        report_lines.append(f"  在线设备: {online_count} ✅")
+        report_lines.append(f"  离线设备: {offline_count} ❌")
+        report_lines.append(f"  警告设备: {warning_count} ⚠️")
+        report_lines.append(f"  错误设备: {error_count} ❓")
         
-        # 按设备类型分组显示
+        # 按设备类型分组显示，并按排序顺序
         device_types = {}
         for device_name, result in results.items():
             dev_type = result.get('type', 'unknown')
@@ -289,9 +347,28 @@ class DeviceChecker:
                 device_types[dev_type] = []
             device_types[dev_type].append((device_name, result))
         
-        for dev_type, devices in device_types.items():
-            report_lines.append(f"\n{dev_type.upper()} 设备 ({len(devices)}台):")
-            report_lines.append("-" * 40)
+        # 按照类型排序顺序显示
+        for dev_type in sorted(self.type_order.keys(), key=lambda x: self.type_order.get(x, 99)):
+            if dev_type not in device_types:
+                continue
+                
+            # 获取类型显示名称
+            type_display_names = {
+                'kylin': '麒麟系统',
+                'uos': '统信系统(UOS)',
+                'server': '服务器',
+                'huawei_switch': '华为交换机',
+                'huawei_firewall': '华为防火墙',
+                'printer': '打印机'
+            }
+            display_name = type_display_names.get(dev_type, dev_type)
+            
+            # 对该类型下的设备按order字段排序
+            devices = device_types[dev_type]
+            devices.sort(key=lambda x: x[1].get('order', 999))
+            
+            report_lines.append(f"\n{display_name} 设备 ({len(devices)}台):")
+            report_lines.append("-" * 60)
             
             for device_name, result in devices:
                 status_icon = {
@@ -302,35 +379,66 @@ class DeviceChecker:
                     'unknown': '❔'
                 }.get(result['status'], '❔')
                 
+                # 格式化响应时间
+                response_time = result.get('response_time')
+                if response_time:
+                    response_str = f"{response_time:.2f}s"
+                else:
+                    response_str = "N/A"
+                
                 report_lines.append(
                     f"{status_icon} {device_name:15} | "
                     f"IP: {result.get('ip', 'N/A'):15} | "
-                    f"状态: {result.get('status', 'unknown'):8} | "
+                    f"状态: {result['status']:8} | "
+                    f"响应: {response_str:8} | "
                     f"{result.get('details', '')}"
                 )
         
-        # 异常设备汇总
+        # 异常设备汇总（按顺序）
         abnormal_devices = [
             (name, result) for name, result in results.items() 
             if result.get('status') in ['offline', 'warning', 'error']
         ]
         
-        if abnormal_devices:
-            report_lines.append(f"\n⚠️ 异常设备汇总 ({len(abnormal_devices)}台):")
-            report_lines.append("-" * 40)
-            for device_name, result in abnormal_devices:
-                report_lines.append(f"  {device_name}: {result.get('details', '未知异常')}")
+        # 对异常设备按order排序
+        abnormal_devices.sort(key=lambda x: x[1].get('order', 999))
         
-        report_lines.append(f"\n巡检完成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        report_lines.append("=" * 60)
+        if abnormal_devices:
+            report_lines.append(f"\n🚨 异常设备汇总 ({len(abnormal_devices)}台):")
+            report_lines.append("-" * 60)
+            for device_name, result in abnormal_devices:
+                status_icon = {
+                    'offline': '❌',
+                    'warning': '⚠️',
+                    'error': '❓'
+                }.get(result['status'], '❔')
+                
+                report_lines.append(f"{status_icon} {device_name:15} | {result.get('details', '未知异常')}")
+        
+        report_lines.append(f"\n📁 报告保存位置: {self.output_dir}")
+        report_lines.append(f"⏰ 巡检完成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        report_lines.append("=" * 70)
         
         return "\n".join(report_lines)
 
 def main():
     """主函数"""
-    checker = DeviceChecker()
+    # 添加命令行参数解析
+    parser = argparse.ArgumentParser(description='实验室巡检系统')
+    parser.add_argument('--output-dir', '-o', type=str, default='./reports',
+                       help='报告保存目录，默认为 ./reports')
+    parser.add_argument('--quick', '-q', action='store_true',
+                       help='快速模式，减少超时时间')
     
-    print("设备巡检系统")
+    args = parser.parse_args()
+    
+    # 初始化检查器
+    checker = DeviceChecker(output_dir=args.output_dir)
+    
+    print("=" * 60)
+    print("设备巡检系统 v1.1")
+    print(f"报告将保存到: {os.path.abspath(args.output_dir)}")
+    print("=" * 60)
     print("正在检查设备状态...")
     
     # 执行检查
@@ -342,22 +450,139 @@ def main():
     
     # 保存报告到文件
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"device_inspection_report_{timestamp}.txt"
+    filename = os.path.join(args.output_dir, f"device_inspection_report_{timestamp}.txt")
     
     with open(filename, 'w', encoding='utf-8') as f:
         f.write(report)
     
-    print(f"\n详细报告已保存到: {filename}")
+    print(f"\n📄 详细报告已保存到: {filename}")
+    
+    # 同时保存一份HTML格式的报告（可选）
+    html_filename = os.path.join(args.output_dir, f"device_inspection_report_{timestamp}.html")     
+    save_html_report(results, html_filename, checker.output_dir)
     
     # 如果有异常设备，返回非零退出码
     abnormal_count = sum(1 for r in results.values() 
                         if r.get('status') in ['offline', 'warning', 'error'])
     
     if abnormal_count > 0:
-        print(f"警告: 发现 {abnormal_count} 台异常设备")
+        print(f"⚠️  警告: 发现 {abnormal_count} 台异常设备")
         return 1
     
+    print("✅ 所有设备检查正常！")
     return 0
+
+def save_html_report(results: Dict[str, Dict], filename: str, output_dir: str):
+    """保存HTML格式的报告（可选功能）"""
+    try:
+        # 获取当前时间
+        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        
+        # 统计信息
+        total = len(results)
+        online_count = sum(1 for r in results.values() if r.get('status') == 'online')
+        offline_count = sum(1 for r in results.values() if r.get('status') == 'offline')
+        warning_count = sum(1 for r in results.values() if r.get('status') == 'warning')
+        error_count = sum(1 for r in results.values() if r.get('status') == 'error')
+        
+        # 生成HTML内容
+        html_content = f"""<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>实验室巡检报告 - {current_time}</title>
+    <style>
+        body {{ font-family: 'Microsoft YaHei', Arial, sans-serif; margin: 20px; }}
+        .header {{ background-color: #f0f0f0; padding: 20px; border-radius: 5px; }}
+        .stats {{ background-color: #e9ecef; padding: 15px; border-radius: 5px; margin: 20px 0; }}
+        .device-table {{ width: 100%; border-collapse: collapse; margin: 20px 0; }}
+        .device-table th, .device-table td {{ border: 1px solid #ddd; padding: 8px; text-align: left; }}
+        .device-table th {{ background-color: #4CAF50; color: white; }}
+        .status-online {{ color: green; font-weight: bold; }}
+        .status-offline {{ color: red; font-weight: bold; }}
+        .status-warning {{ color: orange; font-weight: bold; }}
+        .status-error {{ color: purple; font-weight: bold; }}
+        .summary {{ margin-top: 30px; padding: 15px; background-color: #f8d7da; border-radius: 5px; }}
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>实验室巡检报告</h1>
+        <p>生成时间: {current_time}</p>
+        <p>报告位置: {output_dir}</p>
+    </div>
+    
+    <div class="stats">
+        <h2>统计信息</h2>
+        <p>总计设备: {total}</p>
+        <p>在线设备: <span class="status-online">{online_count}</span></p>
+        <p>离线设备: <span class="status-offline">{offline_count}</span></p>
+        <p>警告设备: <span class="status-warning">{warning_count}</span></p>
+        <p>错误设备: <span class="status-error">{error_count}</span></p>
+    </div>
+    
+    <h2>设备详细状态</h2>
+    <table class="device-table">
+        <tr>
+            <th>设备名称</th>
+            <th>IP地址</th>
+            <th>设备类型</th>
+            <th>状态</th>
+            <th>响应时间</th>
+            <th>详细信息</th>
+        </tr>
+"""
+        
+        # 按顺序添加设备行
+        sorted_results = sorted(results.items(), key=lambda x: x[1].get('order', 999))
+        
+        for device_name, result in sorted_results:
+            status_class = f"status-{result.get('status', 'unknown')}"
+            response_time = result.get('response_time')
+            response_str = f"{response_time:.2f}s" if response_time else "N/A"
+            
+            html_content += f"""
+        <tr>
+            <td>{device_name}</td>
+            <td>{result.get('ip', 'N/A')}</td>
+            <td>{result.get('type', 'unknown')}</td>
+            <td class="{status_class}">{result.get('status', 'unknown')}</td>
+            <td>{response_str}</td>
+            <td>{result.get('details', '')}</td>
+        </tr>
+"""
+        
+        # 异常设备汇总
+        abnormal_devices = [(name, r) for name, r in results.items() 
+                           if r.get('status') in ['offline', 'warning', 'error']]
+        
+        if abnormal_devices:
+            html_content += f"""
+    </table>
+    
+    <div class="summary">
+        <h2>异常设备汇总 ({len(abnormal_devices)}台)</h2>
+        <ul>
+"""
+            for device_name, result in abnormal_devices:
+                html_content += f'            <li>{device_name}: {result.get("details", "未知异常")}</li>\n'
+            
+            html_content += "        </ul>\n    </div>\n"
+        
+        html_content += """
+</body>
+</html>
+"""
+        
+        # 写入文件
+        with open(filename, 'w', encoding='utf-8') as f:
+            f.write(html_content)
+        
+        print(f"🌐 HTML报告已保存到: {filename}")
+        
+    except Exception as e:
+        print(f"生成HTML报告失败: {e}")
 
 if __name__ == "__main__":
     exit_code = main()
