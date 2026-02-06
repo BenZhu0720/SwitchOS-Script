@@ -20,13 +20,13 @@ from typing import Dict, List, Tuple
 import logging
 from datetime import datetime
 
-# 配置日志
+# 配置日志 - 移除控制台日志中的Unicode字符
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('device_check.log'),
-        logging.StreamHandler()
+        logging.FileHandler('device_check.log', encoding='utf-8'),
+        logging.StreamHandler(sys.stdout)
     ]
 )
 logger = logging.getLogger(__name__)
@@ -91,6 +91,16 @@ class DeviceChecker:
             self.ping_timeout = 2000  # 毫秒
         else:
             self.ping_timeout = 2    # 秒
+        
+        # Windows系统下，设置控制台编码为UTF-8
+        if self.os_type == 'windows':
+            try:
+                import ctypes
+                # 尝试设置控制台编码为UTF-8
+                if hasattr(sys.stdout, 'reconfigure'):
+                    sys.stdout.reconfigure(encoding='utf-8')
+            except:
+                pass
     
     def check_port(self, host: str, port: int, timeout: int = 3) -> bool:
         """检查端口是否开放"""
@@ -118,7 +128,8 @@ class DeviceChecker:
                 command,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                universal_newlines=True
+                universal_newlines=True,
+                encoding='gbk' if self.os_type == 'windows' else 'utf-8'
             )
             
             stdout, stderr = process.communicate(timeout=5)
@@ -374,14 +385,15 @@ class DeviceChecker:
                     name, result = future.result()
                     results[name] = result
                     
-                    status_icon = {
-                        'online': '✅',
-                        'offline': '❌',
-                        'warning': '⚠️',
-                        'error': '❓'
-                    }.get(result['status'], '❔')
+                    # 使用简单的文本符号替代Unicode字符，避免编码问题
+                    status_symbol = {
+                        'online': '[OK]',
+                        'offline': '[X]',
+                        'warning': '[!]',
+                        'error': '[?]'
+                    }.get(result['status'], '[?]')
                     
-                    logger.info(f"{status_icon} 设备 {name} ({result['ip']}) - 状态: {result['status']}")
+                    logger.info(f"{status_symbol} 设备 {name} ({result['ip']}) - 状态: {result['status']}")
                 except Exception as e:
                     logger.error(f"检查设备 {device_name} 时出错: {e}")
                     results[device_name] = {
@@ -402,19 +414,71 @@ class DeviceChecker:
         report_lines.append(f"操作系统: {self.os_type.upper()}")
         report_lines.append("=" * 70)
         
-        # 统计信息
+        # 统计信息 - 使用固定宽度格式化确保对齐
         total = len(results)
         online_count = sum(1 for r in results.values() if r.get('status') == 'online')
         offline_count = sum(1 for r in results.values() if r.get('status') == 'offline')
         warning_count = sum(1 for r in results.values() if r.get('status') == 'warning')
         error_count = sum(1 for r in results.values() if r.get('status') == 'error')
         
-        report_lines.append(f"\n📊 统计信息:")
-        report_lines.append(f"  总计设备: {total}")
-        report_lines.append(f"  在线设备: {online_count} ✅")
-        report_lines.append(f"  离线设备: {offline_count} ❌")
-        report_lines.append(f"  警告设备: {warning_count} ⚠️")
-        report_lines.append(f"  错误设备: {error_count} ❓")
+        # 根据操作系统选择符号
+        if self.os_type == 'windows':
+            # Windows使用简单的ASCII符号
+            symbols = {
+                'total': '统计信息',
+                'online': '在线设备',
+                'offline': '离线设备', 
+                'warning': '警告设备',
+                'error': '错误设备',
+                'icon_online': '[OK]',
+                'icon_offline': '[X]',
+                'icon_warning': '[!]',
+                'icon_error': '[?]',
+                'chart': '状态分布',
+                'alert': '异常设备',
+                'dir': '报告位置',
+                'time': '完成时间',
+                'file': '文件'
+            }
+        else:
+            # 非Windows系统使用Unicode符号
+            symbols = {
+                'total': '📊 统计信息',
+                'online': '在线设备',
+                'offline': '离线设备',
+                'warning': '警告设备',
+                'error': '错误设备',
+                'icon_online': '✅',
+                'icon_offline': '❌',
+                'icon_warning': '⚠️',
+                'icon_error': '❓',
+                'chart': '📈 状态分布',
+                'alert': '🚨 异常设备',
+                'dir': '📁 报告位置',
+                'time': '⏰ 完成时间',
+                'file': '📄 文件'
+            }
+        
+        report_lines.append(f"\n{symbols['total']}:")
+        report_lines.append(f"  总计设备: {total:>3}")
+        report_lines.append(f"  在线设备: {online_count:>3} {symbols['icon_online']}")
+        report_lines.append(f"  离线设备: {offline_count:>3} {symbols['icon_offline']}")
+        report_lines.append(f"  警告设备: {warning_count:>3} {symbols['icon_warning']}")
+        report_lines.append(f"  错误设备: {error_count:>3} {symbols['icon_error']}")
+        
+        # 设备状态分布可视化（可选）
+        if total > 0:
+            report_lines.append(f"\n{symbols['chart']}:")
+            bar_length = 20
+            online_bar = '█' * int(online_count / total * bar_length) if total > 0 else ''
+            offline_bar = '█' * int(offline_count / total * bar_length) if total > 0 else ''
+            warning_bar = '█' * int(warning_count / total * bar_length) if total > 0 else ''
+            error_bar = '█' * int(error_count / total * bar_length) if total > 0 else ''
+            
+            report_lines.append(f"  在线: [{online_bar:<{bar_length}}] {online_count/total*100:.1f}%")
+            report_lines.append(f"  离线: [{offline_bar:<{bar_length}}] {offline_count/total*100:.1f}%")
+            report_lines.append(f"  警告: [{warning_bar:<{bar_length}}] {warning_count/total*100:.1f}%")
+            report_lines.append(f"  错误: [{error_bar:<{bar_length}}] {error_count/total*100:.1f}%")
         
         # 按设备类型分组显示，并按排序顺序
         device_types = {}
@@ -444,16 +508,33 @@ class DeviceChecker:
             devices = device_types[dev_type]
             devices.sort(key=lambda x: x[1].get('order', 999))
             
-            report_lines.append(f"\n{display_name} 设备 ({len(devices)}台):")
+            # 统计该类型设备的状态
+            type_total = len(devices)
+            type_online = sum(1 for _, r in devices if r.get('status') == 'online')
+            type_offline = sum(1 for _, r in devices if r.get('status') == 'offline')
+            type_warning = sum(1 for _, r in devices if r.get('status') == 'warning')
+            type_error = sum(1 for _, r in devices if r.get('status') == 'error')
+            
+            report_lines.append(f"\n{display_name} 设备 ({type_total}台):")
+            report_lines.append(f"  状态: 在线:{type_online:>2} 离线:{type_offline:>2} 警告:{type_warning:>2} 错误:{type_error:>2}")
             report_lines.append("-" * 60)
             
             for device_name, result in devices:
-                status_icon = {
-                    'online': '✅',
-                    'offline': '❌',
-                    'warning': '⚠️',
-                    'error': '❓'
-                }.get(result['status'], '❔')
+                # 根据操作系统选择状态图标
+                if self.os_type == 'windows':
+                    status_icon = {
+                        'online': '[OK]',
+                        'offline': '[X]',
+                        'warning': '[!]',
+                        'error': '[?]'
+                    }.get(result['status'], '[?]')
+                else:
+                    status_icon = {
+                        'online': '✅',
+                        'offline': '❌',
+                        'warning': '⚠️',
+                        'error': '❓'
+                    }.get(result['status'], '❔')
                 
                 # 格式化响应时间
                 response_time = result.get('response_time')
@@ -462,11 +543,12 @@ class DeviceChecker:
                 else:
                     response_str = "N/A"
                 
+                # 使用固定宽度确保各列对齐
                 report_lines.append(
                     f"{status_icon} {device_name:15} | "
                     f"IP: {result.get('ip', 'N/A'):15} | "
                     f"状态: {result['status']:8} | "
-                    f"响应: {response_str:8} | "
+                    f"响应: {response_str:>7} | "
                     f"{result.get('details', '')}"
                 )
         
@@ -480,19 +562,26 @@ class DeviceChecker:
         abnormal_devices.sort(key=lambda x: x[1].get('order', 999))
         
         if abnormal_devices:
-            report_lines.append(f"\n🚨 异常设备汇总 ({len(abnormal_devices)}台):")
+            report_lines.append(f"\n{symbols['alert']}汇总 ({len(abnormal_devices)}台):")
             report_lines.append("-" * 60)
             for device_name, result in abnormal_devices:
-                status_icon = {
-                    'offline': '❌',
-                    'warning': '⚠️',
-                    'error': '❓'
-                }.get(result['status'], '❔')
+                if self.os_type == 'windows':
+                    status_icon = {
+                        'offline': '[X]',
+                        'warning': '[!]',
+                        'error': '[?]'
+                    }.get(result['status'], '[?]')
+                else:
+                    status_icon = {
+                        'offline': '❌',
+                        'warning': '⚠️',
+                        'error': '❓'
+                    }.get(result['status'], '❔')
                 
                 report_lines.append(f"{status_icon} {device_name:15} | {result.get('details', '未知异常')}")
         
-        report_lines.append(f"\n📁 报告保存位置: {os.path.abspath(self.output_dir)}")
-        report_lines.append(f"⏰ 巡检完成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        report_lines.append(f"\n{symbols['dir']}: {os.path.abspath(self.output_dir)}")
+        report_lines.append(f"{symbols['time']}: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         report_lines.append("=" * 70)
         
         return "\n".join(report_lines)
@@ -500,7 +589,7 @@ class DeviceChecker:
 def main():
     """主函数"""
     print("=" * 60)
-    print("设备状态巡检系统 v1.0")
+    print("设备状态巡检系统 v1.2 (Windows兼容版)")
     print(f"运行环境: {platform.system()} {platform.release()}")
     print("=" * 60)
     
@@ -521,33 +610,51 @@ def main():
     
     # 生成并显示报告
     report = checker.generate_report(results)
-    print("\n" + report)
+    
+    # 安全打印报告（避免编码错误）
+    try:
+        print("\n" + report)
+    except UnicodeEncodeError:
+        # 如果打印失败，尝试使用简单文本
+        print("\n注意:由于编码问题，部分特殊字符可能无法显示")
+        # 替换Unicode字符
+        safe_report = report
+        replacements = [
+            ('✅', '[OK]'), ('❌', '[X]'), ('⚠️', '[!]'), ('❓', '[?]'),
+            ('📊', '统计'), ('🚨', '警报'), ('📁', '目录'), ('⏰', '时间'),
+            ('📄', '文件'), ('█', '#')
+        ]
+        for uni_char, ascii_char in replacements:
+            safe_report = safe_report.replace(uni_char, ascii_char)
+        print("\n" + safe_report)
+    
     print(f"\n总检查时间: {total_time:.2f}秒")
     
-    # 保存报告到文件
+    # 保存报告到文件（使用UTF-8编码）
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     filename = os.path.join(output_dir, f"device_inspection_report_{timestamp}.txt")
     
     try:
         with open(filename, 'w', encoding='utf-8') as f:
             f.write(report)
-        print(f"\n📄 详细报告已保存到: {filename}")
-    except Exception:
+        print(f"\n报告已保存到: {filename}")
+    except Exception as e:
         # 如果保存失败，保存到当前目录
         filename = f"device_inspection_report_{timestamp}.txt"
         with open(filename, 'w', encoding='utf-8') as f:
             f.write(report)
-        print(f"📄 报告已保存到当前目录: {filename}")
+        print(f"\n报告已保存到当前目录: {filename}")
+        print(f"错误信息: {e}")
     
     # 如果有异常设备，返回非零退出码
     abnormal_count = sum(1 for r in results.values() 
                         if r.get('status') in ['offline', 'warning', 'error'])
     
     if abnormal_count > 0:
-        print(f"\n⚠️  警告: 发现 {abnormal_count} 台异常设备")
+        print(f"\n警告: 发现 {abnormal_count} 台异常设备")
         return 1
     
-    print("\n✅ 所有设备检查正常！")
+    print("\n所有设备检查正常！")
     return 0
 
 if __name__ == "__main__":
@@ -558,5 +665,7 @@ if __name__ == "__main__":
         print("\n\n巡检被用户中断")
         sys.exit(130)
     except Exception as e:
-        print(f"\n❌ 程序运行出错: {e}")
+        print(f"\n程序运行出错: {e}")
+        import traceback
+        traceback.print_exc()
         sys.exit(1)
