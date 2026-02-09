@@ -62,10 +62,10 @@ class DeviceChecker:
             'laptop2': {'ip': '172.16.11.6', 'type': 'uos', 'port': 22, 'username': 'admin', 'order': 6},
             
             # 服务器 (4台)
-            'server1': {'ip': '172.16.12.1', 'type': 'server', 'port': 22, 'username': 'root', 'order': 7},
-            'server2': {'ip': '172.16.12.2', 'type': 'server', 'port': 22, 'username': 'root', 'order': 8},
-            'server3': {'ip': '172.16.12.3', 'type': 'server', 'port': 22, 'username': 'root', 'order': 9},
-            'server4': {'ip': '172.16.12.4', 'type': 'server', 'port': 22, 'username': 'root', 'order': 10},
+            'server1': {'ip': '172.16.13.1', 'type': 'server', 'port': 22, 'username': 'root', 'order': 7},
+            'server2': {'ip': '172.16.13.2', 'type': 'server', 'port': 22, 'username': 'root', 'order': 8},
+            'server3': {'ip': '172.16.13.3', 'type': 'server', 'port': 22, 'username': 'root', 'order': 9},
+            'server4': {'ip': '172.16.13.4', 'type': 'server', 'port': 22, 'username': 'root', 'order': 10},
             
             # 关键网络设备
             'huawei_switch': {'ip': '172.16.11.254', 'type': 'huawei_switch', 'port': 22, 'order': 11},
