@@ -270,6 +270,9 @@ class DeviceChecker:
         
         return result
     
+
+    
+    
     def check_printer(self, device_name: str, device_info: Dict) -> Dict:
         """检查打印机状态"""
         result = {
