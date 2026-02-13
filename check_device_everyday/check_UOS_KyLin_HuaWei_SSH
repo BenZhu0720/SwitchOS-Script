@@ -199,30 +199,40 @@ class DeviceChecker:
         start_time = time.time()
         ip_address = device_info['ip']
         port = device_info.get('port', 22)
+        device_type = device_info['type']
         
         # 使用多种方法检查设备状态
         reachable, method, detail = self.check_host_by_multiple_methods(ip_address, port)
         
         if reachable:
-            # 进一步检查SSH端口
-            if method == f"端口{port}" or method == "ping":
-                if self.check_port(ip_address, port, timeout=3):
-                    result['status'] = 'online'
-                    result['details'] = f'设备运行正常 (检测方式: {method})'
-                else:
-                    result['status'] = 'warning'
-                    result['details'] = f'设备可达但SSH端口不可用 (检测方式: {method})'
+            ssh_available = False
+            if method == f"端口{port}":
+                ssh_available = True
             else:
-                result['status'] = 'warning'
-                result['details'] = f'设备可达但SSH端口未检测 (检测方式: {method})'
+                ssh_available = self.check_port(ip_address, port, timeout=3)
+
+            
+            if ssh_available:
+                result['status'] = 'online'
+                result['details'] = f'设备运行正常 (检测方式: {method})'
+            else:
+                #终端设备ssh不可用视为正常，服务器ssh不可用视为异常
+                if device_type in ['kylin', 'uos']:
+                            result['status'] = 'online'
+                            result['details'] = f'设备在线,SSH服务未开启(终端设备可接受)'
+                else:
+                            result['status'] = 'warning'
+                            result['details'] = f'设备可达但SSH端口不可用(检测方式: {method})'
+        
         else:
             result['status'] = 'offline'
             result['details'] = f'设备不可达: {detail}'
-        
+
         result['response_time'] = time.time() - start_time
         result['check_method'] = method
-        
         return result
+
+
     
     def check_network_device(self, device_name: str, device_info: Dict) -> Dict:
         """检查华为网络设备（交换机、防火墙）"""
